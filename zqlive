@@ -1,0 +1,85 @@
+#!/bin/bash
+#
+echo "Content-type: text/html"
+echo ""
+
+Reclist=/usr/local/nginx/conf/zqlive/record_list
+STOPStream () {
+curl "http://119.147.251.56:8088/control/drop/publisher?app=zqlive&name=$1"
+}
+json () {
+	File=$1
+	Lc=`cat ${File} | wc -l`
+	i=0
+	[ $Lc == 1 ] || echo "["
+	cat ${File} | while read line
+		do
+			let i++
+			echo "{"
+			echo "\"$line\":\"ok\""
+			echo '}'
+			[ $i != $Lc ] && echo ,
+		done
+	[ $Lc == 1 ] || echo "]"
+		return 0
+}
+DelNumber=`echo  "$QUERY_STRING" | awk -F '&' '{for(i=1;i<=NF;i++)print $i}' | grep -c "^del="`
+AddNumber=`echo  "$QUERY_STRING" | awk -F '&' '{for(i=1;i<=NF;i++)print $i}' | grep -c "^add="`
+LisNumber=`echo  "$QUERY_STRING" | awk -F '&' '{for(i=1;i<=NF;i++)print $i}' | grep -c "^list"`
+del_i=0
+add_i=0
+lis_i=0
+j=0
+[ ${DelNumber} != 0 ] && let j++
+[ ${AddNumber} != 0 ] && let j++
+[ ${LisNumber} != 0 ] && let j++
+[ $j -gt 1 ] && echo "["
+[ $j == 0 ] && exit
+echo  "$QUERY_STRING" | awk -F '&' '{for(i=1;i<=NF;i++)print $i}' | sort | while read line
+	do
+		if [ ${line} == list ]
+		then
+			let lis_i++ 
+			[ ${lis_i} == ${LisNumber} ] && echo '{"list":' && json ${Reclist} && echo '}'&& continue
+		fi
+		Action=`echo ${line} | cut -d "=" -f1`
+		Name=`echo ${line} | cut -d "=" -f2`
+		case ${Action} in		
+		del)
+			[ ${del_i} == 0 ] && echo '{"del":'
+			[ ${DelNumber} -gt 1 ] && [ ${del_i} == 0 ] && echo '['
+			control=8
+			! grep '\<'${Name}'\>' ${Reclist} &> /dev/null && echo "{\"${Name}\":\"yet\"}" && control=0
+			if [ ${control} == 8 ] ; then
+				touch /usr/local/nginx/conf/zqlive/streamdel/${Name}	
+				STOPStream ${Name} &> /dev/null
+				sed -i '/\<'${Name}'\>/d' ${Reclist} && echo "{\"${Name}\":\"ok\"}" && sed -i '/^$/d' ${Reclist} &> /dev/null
+			fi
+			let del_i++
+			[ ${del_i} != ${DelNumber} ] && echo ,
+			[ ${DelNumber} -gt 1 ] && [ ${del_i} == ${DelNumber} ] && echo ']' 
+			[ ${del_i} == ${DelNumber} ] && echo '}' && [ ${LisNumber} != 0 ] && echo ,
+			continue
+		;;
+		add)
+			[ ${add_i} == 0 ] && echo '{"add":'
+			[ ${AddNumber} -gt 1 ] && [ ${add_i} == 0 ] && echo '['
+			control=8
+			grep "\<${Name}\>" ${Reclist} &> /dev/null && echo "{\"${Name}\":\"yet\"}" && control=0
+			if [ ${control} == 8 ] ; then
+				touch /usr/local/nginx/conf/zqlive/streamadd/${Name}
+				STOPStream ${Name} &> /dev/null
+				echo "${Name}" >> ${Reclist} && echo "{\"${Name}\":\"ok\"}"
+			fi
+			let add_i++
+			[ ${add_i} != ${AddNumber} ] && echo ,
+                        [ ${AddNumber} -gt 1 ] && [ ${add_i} == ${AddNumber} ] && echo ']' 
+                        [ ${add_i} == ${AddNumber} ] && echo '}' && [ $j -gt 1 ] && echo ,
+			continue 
+		;;
+		*)
+			continue
+		;;
+		esac
+	done
+[ $j -gt 1 ] && echo "]"
